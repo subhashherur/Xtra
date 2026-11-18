@@ -38,6 +38,7 @@ import com.github.andreyasadchy.xtra.model.misc.FFZResponse
 import com.github.andreyasadchy.xtra.model.misc.RecentMessagesResponse
 import com.github.andreyasadchy.xtra.model.misc.STVChannelResponse
 import com.github.andreyasadchy.xtra.model.misc.STVEmoteSetResponse
+import com.github.andreyasadchy.xtra.model.misc.STVGqlDataResponse
 import com.github.andreyasadchy.xtra.model.ui.CustomProxy
 import com.github.andreyasadchy.xtra.model.ui.StreamProxy
 import com.github.andreyasadchy.xtra.model.ui.TranslatedChannel
@@ -48,9 +49,12 @@ import com.github.andreyasadchy.xtra.util.NetworkUtils.executeAsync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
@@ -1014,39 +1018,34 @@ class PlayerRepository(
 
     /**
      * 7TV removed the v3 REST users endpoint. Channel emotes are resolved through the
-     * v3 GraphQL API instead; the response is reshaped into the old REST user format so
-     * existing parsing and caching keep working.
+     * v3 GraphQL API instead: first the emote set id of the Twitch connection, then
+     * only that emote set (fetching every owned set would waste a lot of memory).
+     * The set is returned in the old REST user format so existing parsing and
+     * caching keep working.
      */
     suspend fun loadSTVUserResponse(networkLibrary: String?, channelId: String): String = withContext(Dispatchers.IO) {
-        val body = buildJsonObject {
-            put("query", "query GetChannelEmotes(\$id: String!) { userByConnection(platform: TWITCH, id: \$id) { connections { platform emote_set_id } emote_sets(entitled: false) { id emotes { id name flags data { name flags animated host { url files { name format } } } } } } }")
+        val userBody = buildJsonObject {
+            put("query", "query GetChannelEmoteSetId(\$id: String!) { userByConnection(platform: TWITCH, id: \$id) { connections { platform emote_set_id } } }")
             put("variables", buildJsonObject {
                 put("id", channelId)
             })
         }.toString()
-        val response = postSTVGql(networkLibrary, body)
-        val user = JSONObject(response).optJSONObject("data")?.optJSONObject("userByConnection")
-        val setId = user?.optJSONArray("connections")?.let { connections ->
-            (0 until connections.length()).mapNotNull { connections.optJSONObject(it) }
-                .firstOrNull { it.optString("platform") == "TWITCH" }
-                ?.optString("emote_set_id")?.takeIf { it.isNotBlank() }
-        }
-        val set = if (setId != null) {
-            user?.optJSONArray("emote_sets")?.let { emoteSets ->
-                (0 until emoteSets.length()).mapNotNull { emoteSets.optJSONObject(it) }
-                    .firstOrNull { it.optString("id") == setId }
-            }
+        val user = json.decodeFromString<STVGqlDataResponse>(postSTVGql(networkLibrary, userBody)).data?.userByConnection
+        val setId = user?.connections?.firstOrNull { it.platform == "TWITCH" }?.emoteSetId
+        if (setId.isNullOrBlank()) {
+            "{}"
         } else {
-            null
+            val setBody = buildJsonObject {
+                put("query", "query GetEmoteSet(\$id: [ObjectID!]!) { emoteSetsByID(list: \$id) { id emotes { id name flags data { name flags animated host { url files { name format } } } } } }")
+                put("variables", buildJsonObject {
+                    put("id", buildJsonArray {
+                        add(setId)
+                    })
+                })
+            }.toString()
+            val set = json.decodeFromString<STVGqlDataResponse>(postSTVGql(networkLibrary, setBody)).data?.emoteSetsByID?.firstOrNull()
+            json.encodeToString(STVChannelResponse.serializer(), STVChannelResponse(emoteSetId = setId, emoteSet = set))
         }
-        JSONObject().apply {
-            if (setId != null) {
-                put("emote_set_id", setId)
-            }
-            if (set != null) {
-                put("emote_set", set)
-            }
-        }.toString()
     }
 
     private suspend fun postSTVGql(networkLibrary: String?, body: String): String = withContext(Dispatchers.IO) {
