@@ -21,6 +21,19 @@ fun Context.prefs(): SharedPreferences = PreferenceManager.getDefaultSharedPrefe
 
 fun Context.tokenPrefs(): SharedPreferences = getSharedPreferences("prefs2", Context.MODE_PRIVATE)
 
+/**
+ * Wraps the base context with a larger font scale for 10-foot TV viewing.
+ * Only active when TV mode is on.
+ */
+fun Context.applyTvScaling(): Context {
+    if (!TvUtils.isTvMode(this)) {
+        return this
+    }
+    val configuration = Configuration(resources.configuration)
+    configuration.fontScale = configuration.fontScale * 1.2f
+    return createConfigurationContext(configuration)
+}
+
 fun Activity.applyTheme() {
     // On Android 15, wrong language is used when multiple languages are set in device settings
     if (Build.VERSION.SDK_INT == Build.VERSION_CODES.VANILLA_ICE_CREAM) {
@@ -240,6 +253,16 @@ fun Activity.applyTheme() {
                 "3" -> R.style.AppCompatBlueTheme
                 else -> R.style.AppCompatDarkTheme
             }
+        )
+    }
+    if (TvUtils.isTvMode(this)) {
+        this.theme.applyStyle(
+            if (prefs().getBoolean(C.UI_THEME_MATERIAL3, true)) {
+                R.style.TvModeOverlay
+            } else {
+                R.style.TvModeOverlayAppCompat
+            },
+            true
         )
     }
     val isLightTheme = obtainStyledAttributes(intArrayOf(androidx.appcompat.R.attr.isLightTheme)).use {

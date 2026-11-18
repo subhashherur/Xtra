@@ -1609,4 +1609,26 @@
         <item name="android:tint">?attr/colorControlNormal</item>
     </style>
 
+    <!-- TV mode -->
+
+    <style name="TvCard" parent="Widget.Material3.CardView.Elevated">
+        <item name="android:foreground">@drawable/tv_focus_ring</item>
+        <item name="android:layout_margin">8dp</item>
+    </style>
+
+    <style name="TvMaterialCard" parent="Widget.MaterialComponents.CardView">
+        <item name="materialThemeOverlay">@style/MaterialCardOverlay</item>
+        <item name="cardCornerRadius">0dp</item>
+        <item name="strokeWidth">0dp</item>
+        <item name="android:foreground">@drawable/tv_focus_ring</item>
+    </style>
+
+    <style name="TvModeOverlay">
+        <item name="cardStyle">@style/TvCard</item>
+    </style>
+
+    <style name="TvModeOverlayAppCompat">
+        <item name="cardStyle">@style/TvMaterialCard</item>
+    </style>
+
 </resources>
