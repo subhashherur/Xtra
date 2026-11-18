@@ -596,4 +596,6 @@
     <string name="stopping_video_swap">Stopping video swap</string>
     <string name="starting_proxy">Starting proxy</string>
     <string name="stopping_proxy">Stopping proxy</string>
+    <string name="force_tv_mode">Force TV mode</string>
+    <string name="force_tv_mode_summary">Enable TV navigation with a D-pad remote on devices that are not detected as TVs</string>
 </resources>
