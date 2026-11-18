@@ -17,8 +17,10 @@ import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.load.model.GlideUrl
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.github.andreyasadchy.xtra.BuildConfig
+import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.FragmentEmotesListItemBinding
 import com.github.andreyasadchy.xtra.model.chat.Emote
+import com.github.andreyasadchy.xtra.util.TvUtils
 
 class EmotesAdapter(
     private val fragment: Fragment,
@@ -91,6 +93,12 @@ class EmotesAdapter(
                             .into(root)
                     }
                     root.setOnClickListener { clickListener(item) }
+                    if (TvUtils.isTvMode(fragment.requireContext())) {
+                        root.isFocusable = true
+                        root.background = androidx.core.content.ContextCompat.getDrawable(
+                            fragment.requireContext(), R.drawable.tv_focus_ring
+                        )
+                    }
                 }
             }
         }

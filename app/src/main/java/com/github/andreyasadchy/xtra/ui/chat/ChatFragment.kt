@@ -50,6 +50,7 @@ import com.github.andreyasadchy.xtra.ui.player.PlayerFragment
 import com.github.andreyasadchy.xtra.ui.view.AutoCompleteAdapter
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.TvUtils
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.reduceDragSensitivity
@@ -105,6 +106,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        val tvMode = TvUtils.isTvMode(requireContext())
         viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.integrity.collect {
@@ -320,6 +322,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             }
                         }
                         messagingEnabled = true
+                    }
+                    if (tvMode) {
+                        // Clean focus states for the chat input row buttons
+                        for (button in listOf(send, clear, emotes)) {
+                            button.background = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.tv_focus_circle)
+                        }
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -721,7 +729,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                         }
                                         adapter.notifyItemRangeRemoved(0, removeCount)
                                     }
-                                    if (!isChatTouched && binding.btnDown.isGone) {
+                                    if (!isChatTouched && binding.btnDown.isGone && (!tvMode || !binding.recyclerView.hasFocus())) {
                                         binding.recyclerView.scrollToPosition(lastIndex - removeCount)
                                     }
                                 }
@@ -737,7 +745,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 val lastIndex = result.second
                                 adapter?.let { adapter ->
                                     adapter.notifyItemRangeInserted(0, messages.size)
-                                    if (!isChatTouched && binding.btnDown.isGone) {
+                                    if (!isChatTouched && binding.btnDown.isGone && (!tvMode || !binding.recyclerView.hasFocus())) {
                                         binding.recyclerView.scrollToPosition(lastIndex)
                                     }
                                 }
