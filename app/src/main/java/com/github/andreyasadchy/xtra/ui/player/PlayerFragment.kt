@@ -25,6 +25,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.RoundedCorner
 import android.view.VelocityTracker
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
@@ -32,11 +33,13 @@ import android.view.ViewPropertyAnimator
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.trackPipAnimationHintView
 import androidx.annotation.OptIn
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
@@ -54,6 +57,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.TimeBar
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.RecyclerView
@@ -73,6 +77,7 @@ import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.ui.player.PlayerViewModel.Companion.PlayerViewModelFactory
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.TvUtils
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.isKeyboardShown
 import com.github.andreyasadchy.xtra.util.prefs
@@ -125,9 +130,14 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var controllerAnimation: ViewPropertyAnimator? = null
     private var backgroundColor: Int? = null
     private var backgroundVisible = false
+    private var tvMode = false
 
     private val backPressedCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
+            if (tvMode && isMaximized && binding.playerControls.root.isVisible) {
+                hideController()
+                return
+            }
             minimize()
         }
     }
@@ -240,6 +250,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             chatWidthLandscape = requireContext().prefs().getInt(C.LANDSCAPE_CHAT_WIDTH, 0)
             resizeMode = requireContext().prefs().getInt(C.ASPECT_RATIO_LANDSCAPE, AspectRatioFrameLayout.RESIZE_MODE_FIT)
             aspectRatioFrameLayout.setAspectRatio(16f / 9f)
+            tvMode = TvUtils.isTvMode(requireContext())
             initLayout()
             changePlayerMode()
             val viewConfiguration = ViewConfiguration.get(requireContext())
@@ -625,6 +636,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 duration.text = DateUtils.formatElapsedTime(0)
                 subtitleView.setUserDefaultStyle()
                 subtitleView.setUserDefaultTextSize()
+            }
+            if (tvMode) {
+                setupTvMode()
             }
         }
     }
@@ -1167,7 +1181,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 playerLayout.isPortrait = true
                 chatLayout.isPortrait = true
                 with(playerControls) {
-                    if (requireContext().prefs().getBoolean(C.PLAYER_FULLSCREEN, true)) {
+                    if (requireContext().prefs().getBoolean(C.PLAYER_FULLSCREEN, true) && !tvMode) {
                         fullscreen.visibility = View.VISIBLE
                         fullscreen.setImageResource(R.drawable.baseline_fullscreen_black_24)
                         fullscreen.setOnClickListener {
@@ -1242,7 +1256,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 playerLayout.isPortrait = false
                 chatLayout.isPortrait = false
                 with(playerControls) {
-                    if (requireContext().prefs().getBoolean(C.PLAYER_FULLSCREEN, true)) {
+                    if (requireContext().prefs().getBoolean(C.PLAYER_FULLSCREEN, true) && !tvMode) {
                         fullscreen.visibility = View.VISIBLE
                         fullscreen.setImageResource(R.drawable.baseline_fullscreen_exit_black_24)
                         fullscreen.setOnClickListener {
@@ -1778,6 +1792,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             setListener(null)
                             if (view != null) {
                                 binding.playerControls.root.visibility = View.GONE
+                                if (tvMode && binding.playerControls.root.hasFocus()) {
+                                    binding.dragView.requestFocus()
+                                }
                             }
                         }
                     }
@@ -1789,6 +1806,123 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 controllerAnimation?.cancel()
                 binding.playerControls.root.alpha = 0f
                 binding.playerControls.root.visibility = View.GONE
+                if (tvMode && binding.playerControls.root.hasFocus()) {
+                    binding.dragView.requestFocus()
+                }
+            }
+        }
+    }
+
+    /**
+     * D-pad navigation for TV mode. The player itself holds focus when the
+     * controls are not in use, so remote presses reach the player:
+     * Select toggles play/pause, left/right seek, up shows the controls,
+     * down hides them, Back closes the controls first and then minimizes.
+     */
+    private fun setupTvMode() {
+        with(binding) {
+            dragView.isFocusable = true
+            dragView.requestFocus()
+            val focusListener = View.OnFocusChangeListener { _, hasFocus ->
+                if (hasFocus) {
+                    playerControls.root.removeCallbacks(controllerHideAction)
+                } else {
+                    if (view != null && !playerControls.root.hasFocus() && !playerControls.progressBar.isPressed) {
+                        playerControls.root.removeCallbacks(controllerHideAction)
+                        if (controllerAutoHide && controllerHideOnTouch) {
+                            playerControls.root.postDelayed(controllerHideAction, 3000)
+                        }
+                    }
+                }
+            }
+            fun applyTvControlStyle(view: View) {
+                if (view is ImageButton || view is Button || view is DefaultTimeBar) {
+                    view.background = ContextCompat.getDrawable(requireContext(), R.drawable.tv_focus_circle)
+                    view.onFocusChangeListener = focusListener
+                    if (view is DefaultTimeBar) {
+                        view.isFocusable = true
+                        view.setOnKeyListener { _, keyCode, event ->
+                            if (event.action == KeyEvent.ACTION_DOWN) {
+                                when (keyCode) {
+                                    KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        val seconds = requireContext().prefs().getString(C.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10L
+                                        getCurrentPosition()?.let { seek(it - seconds * 1000) }
+                                        updateProgress()
+                                        true
+                                    }
+                                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        val seconds = requireContext().prefs().getString(C.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10L
+                                        getCurrentPosition()?.let { seek(it + seconds * 1000) }
+                                        updateProgress()
+                                        true
+                                    }
+                                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                                        playPause()
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                    }
+                } else if (view is ViewGroup) {
+                    for (i in 0 until view.childCount) {
+                        applyTvControlStyle(view.getChildAt(i))
+                    }
+                }
+            }
+            applyTvControlStyle(playerControls.root)
+            dragView.setOnKeyListener { _, keyCode, event ->
+                if (event.action != KeyEvent.ACTION_DOWN) {
+                    return@setOnKeyListener false
+                }
+                when (keyCode) {
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                        if (isMaximized) {
+                            playPause()
+                        } else {
+                            maximize()
+                        }
+                        true
+                    }
+                    KeyEvent.KEYCODE_DPAD_UP -> {
+                        if (isMaximized) {
+                            showController(force = true)
+                            playerControls.progressBar.requestFocus()
+                            updateProgress()
+                        }
+                        true
+                    }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        if (isMaximized) {
+                            hideController()
+                        }
+                        true
+                    }
+                    KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        if (isMaximized) rewind()
+                        true
+                    }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        if (isMaximized) fastForward()
+                        true
+                    }
+                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                        playPause()
+                        true
+                    }
+                    KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                        rewind()
+                        true
+                    }
+                    KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                        fastForward()
+                        true
+                    }
+                    else -> false
+                }
             }
         }
     }
@@ -2079,9 +2213,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     animate()
                 }
                 val activity = requireActivity()
-                activity.lifecycleScope.launch {
-                    delay(500.milliseconds)
-                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                if (!tvMode) {
+                    activity.lifecycleScope.launch {
+                        delay(500.milliseconds)
+                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
                 }
             }
         }
