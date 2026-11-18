@@ -1012,8 +1012,45 @@ class PlayerRepository(
         Pair(response.id, parseSTVEmotes(response.emotes, useWebp, if (global) Emote.GLOBAL_STV else Emote.CHANNEL_STV))
     }
 
+    /**
+     * 7TV removed the v3 REST users endpoint. Channel emotes are resolved through the
+     * v3 GraphQL API instead; the response is reshaped into the old REST user format so
+     * existing parsing and caching keep working.
+     */
     suspend fun loadSTVUserResponse(networkLibrary: String?, channelId: String): String = withContext(Dispatchers.IO) {
-        val url = "https://7tv.io/v3/users/twitch/${channelId}"
+        val body = buildJsonObject {
+            put("query", "query GetChannelEmotes(\$id: String!) { userByConnection(platform: TWITCH, id: \$id) { connections { platform emote_set_id } emote_sets(entitled: false) { id emotes { id name flags data { name flags animated host { url files { name format } } } } } } }")
+            put("variables", buildJsonObject {
+                put("id", channelId)
+            })
+        }.toString()
+        val response = postSTVGql(networkLibrary, body)
+        val user = JSONObject(response).optJSONObject("data")?.optJSONObject("userByConnection")
+        val setId = user?.optJSONArray("connections")?.let { connections ->
+            (0 until connections.length()).mapNotNull { connections.optJSONObject(it) }
+                .firstOrNull { it.optString("platform") == "TWITCH" }
+                ?.optString("emote_set_id")?.takeIf { it.isNotBlank() }
+        }
+        val set = if (setId != null) {
+            user?.optJSONArray("emote_sets")?.let { emoteSets ->
+                (0 until emoteSets.length()).mapNotNull { emoteSets.optJSONObject(it) }
+                    .firstOrNull { it.optString("id") == setId }
+            }
+        } else {
+            null
+        }
+        JSONObject().apply {
+            if (setId != null) {
+                put("emote_set_id", setId)
+            }
+            if (set != null) {
+                put("emote_set", set)
+            }
+        }.toString()
+    }
+
+    private suspend fun postSTVGql(networkLibrary: String?, body: String): String = withContext(Dispatchers.IO) {
+        val url = "https://7tv.io/v3/gql"
         when {
             networkLibrary == C.HTTP_ENGINE && httpEngine.value != null -> @SuppressLint("NewApi") {
                 val response = suspendCancellableCoroutine { continuation ->
@@ -1023,7 +1060,9 @@ class PlayerRepository(
                         cronetExecutor.value,
                         NetworkUtils.ByteArrayUrlCallback(continuation, timeout)
                     ).apply {
+                        addHeader("Content-Type", "application/json")
                         addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                        setUploadDataProvider(NetworkUtils.ByteArrayUploadProvider(body.toByteArray()), cronetExecutor.value)
                     }.build()
                     timeout.start(request, continuation)
                     request.start()
@@ -1042,7 +1081,9 @@ class PlayerRepository(
                         NetworkUtils.ByteArrayCronetCallback(continuation, timeout),
                         cronetExecutor.value
                     ).apply {
+                        addHeader("Content-Type", "application/json")
                         addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor.value)
                     }.build()
                     timeout.start(request, continuation)
                     request.start()
@@ -1056,7 +1097,9 @@ class PlayerRepository(
             else -> {
                 okHttpClient.value.newCall(Request.Builder().apply {
                     url(url)
+                    header("Content-Type", "application/json")
                     header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                    post(body.toRequestBody())
                 }.build()).executeAsync().use { response ->
                     response.body.string()
                 }
@@ -1105,56 +1148,14 @@ class PlayerRepository(
     }
 
     suspend fun getSTVUser(networkLibrary: String?, userId: String): String? = withContext(Dispatchers.IO) {
-        val url = "https://7tv.io/v3/users/twitch/${userId}"
-        val response = when {
-            networkLibrary == C.HTTP_ENGINE && httpEngine.value != null -> @SuppressLint("NewApi") {
-                val response = suspendCancellableCoroutine { continuation ->
-                    val timeout = NetworkUtils.HttpEngineTimeout()
-                    val request = httpEngine.value!!.newUrlRequestBuilder(
-                        url,
-                        cronetExecutor.value,
-                        NetworkUtils.ByteArrayUrlCallback(continuation, timeout)
-                    ).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build()
-                    timeout.start(request, continuation)
-                    request.start()
-                    continuation.invokeOnCancellation {
-                        request.cancel()
-                        timeout.stop()
-                    }
-                }
-                response.body.decodeToString()
-            }
-            networkLibrary == C.CRONET && cronetEngine.value != null -> {
-                val response = suspendCancellableCoroutine { continuation ->
-                    val timeout = NetworkUtils.CronetTimeout()
-                    val request = cronetEngine.value!!.newUrlRequestBuilder(
-                        url,
-                        NetworkUtils.ByteArrayCronetCallback(continuation, timeout),
-                        cronetExecutor.value
-                    ).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build()
-                    timeout.start(request, continuation)
-                    request.start()
-                    continuation.invokeOnCancellation {
-                        request.cancel()
-                        timeout.stop()
-                    }
-                }
-                response.body.decodeToString()
-            }
-            else -> {
-                okHttpClient.value.newCall(Request.Builder().apply {
-                    url(url)
-                    header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build()).executeAsync().use { response ->
-                    response.body.string()
-                }
-            }
-        }
-        JSONObject(response).optJSONObject("user")?.optString("id")
+        val body = buildJsonObject {
+            put("query", "query GetUserId(\$id: String!) { userByConnection(platform: TWITCH, id: \$id) { id } }")
+            put("variables", buildJsonObject {
+                put("id", userId)
+            })
+        }.toString()
+        val response = postSTVGql(networkLibrary, body)
+        JSONObject(response).optJSONObject("data")?.optJSONObject("userByConnection")?.optString("id")?.takeIf { it.isNotBlank() }
     }
 
     suspend fun sendSTVPresence(networkLibrary: String?, stvUserId: String, channelId: String, sessionId: String?, self: Boolean) = withContext(Dispatchers.IO) {
