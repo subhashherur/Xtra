@@ -11,6 +11,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.github.andreyasadchy.xtra.databinding.CommonRecyclerViewLayoutBinding
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.TvUtils
 import com.github.andreyasadchy.xtra.util.prefs
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -82,6 +83,24 @@ abstract class PagedListFragment : BaseNetworkFragment(), IntegrityDialog.Listen
                 scrollTop.setOnClickListener {
                     (parentFragment as? Scrollable)?.scrollToTop()
                     it.visibility = View.GONE
+                }
+            }
+            if (TvUtils.isTvMode(requireContext())) {
+                // Start with focus on the first list item so the remote controls the grid immediately
+                var initialFocusGiven = false
+                viewLifecycleOwner.lifecycleScope.launch {
+                    repeatOnLifecycle(Lifecycle.State.STARTED) {
+                        pagingAdapter.loadStateFlow.collectLatest { loadState ->
+                            if (!initialFocusGiven && pagingAdapter.itemCount > 0) {
+                                initialFocusGiven = true
+                                recyclerView.post {
+                                    if (root.findFocus() == null) {
+                                        recyclerView.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus()
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

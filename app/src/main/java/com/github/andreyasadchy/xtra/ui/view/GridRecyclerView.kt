@@ -8,6 +8,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.TvUtils
 import com.github.andreyasadchy.xtra.util.prefs
 
 class GridRecyclerView : RecyclerView {
@@ -19,7 +20,10 @@ class GridRecyclerView : RecyclerView {
     private val prefs = context.prefs()
     private val material3 = prefs.getBoolean(C.UI_THEME_MATERIAL3, true)
     private val portraitColumns = prefs.getString(C.PORTRAIT_COLUMN_COUNT, "1")!!.toInt()
-    private val landscapeColumns = prefs.getString(C.LANDSCAPE_COLUMN_COUNT, "2")!!.toInt()
+    private val landscapeColumns = prefs.getString(C.LANDSCAPE_COLUMN_COUNT, "2")!!.let {
+        // A denser grid reads better on TVs; users who set a custom count keep it
+        if (TvUtils.isTvMode(context) && it == "2") "3" else it
+    }.toInt()
 
     private val gridLayoutManager: GridLayoutManager
 
